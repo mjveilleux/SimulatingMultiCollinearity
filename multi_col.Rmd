@@ -1,0 +1,449 @@
+---
+title: "Multi-Collinearity is Weird"
+author: "Mason Veilleux"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: TRUE
+    number_sections: TRUE
+    toc_float: TRUE
+    code_folding: hide
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse, quietly = TRUE)
+library(gganimate)
+library(car)
+```
+
+# Overview
+
+What is perfect multi-collinearity and how does it affect my OLS model?
+No perfect multi-collinearity is one of the more complicated
+Gauss-Markov assumptions of OLS. What is perfect? How much correlation
+can exist between my explanatory variables before I need to re-evaluate
+my specification? I run a simulation to show just how strange the
+assumption is and provide some intuition on evaluating this correlation
+between explanatory variables.
+
+# Getting Started
+
+There are plenty of resources and textbooks to scour through to
+understand and remedy mulit-collinearity in your model. If you need a
+refresher, look through the resources below and come back here for the
+simulation.
+
+1.  Section 3-4a Introductory Econometrics: A Modern Approach by Jeffrey
+    Wooldridge
+2.  [Statistics By
+    Jim](https://statisticsbyjim.com/regression/multicollinearity-in-regression-analysis/)
+3.  [Ben Lambert's Econometrics
+    Videos](https://www.youtube.com/watch?v=O4jDva9B3fw)
+
+To begin, we are faced with the question: How much correlation between
+my explanatory variables is too much? To answer this question, there are
+two elements of our model we should evaluate. We ask ourselves (1) does
+the correlation skew my parameters? and (2) does the correlation affect
+my prediction? Keep this questions in mind as we go through the
+simulation.
+
+# Multi-Collinearity In Action
+
+We are going to look at a linear regression with an outcome variable $y$
+and two dependent variables $x_1$ and $x_2$ . Each iteration of the
+simulation will increase the effect of $x_1$ on $x_2$ which results in a
+higher correlation between the two variables. Let's look at the
+simulation code:
+
+```{r}
+
+# set up
+n <- 1000 # number of observations
+a <- seq(from = 0, to = 5, by = ((10 - 0)/(201 - 1))) # we want 0.05 increments from 0 to 5
+b_1 <- 1 #  true coeffcient for y on x_1 (aka the estimand for y on x_1)
+b_2 <- 2 # true coefficient for y on x_2 (aka the estimand for y on x_2)
+
+
+# create data frames to bind
+
+r_sq_df_total <- data.frame()
+f_stat_df_total <- data.frame()
+cor_df_total <- data.frame()
+adj_r_sq_df_total <- data.frame()
+x_1_se_df_total <- data.frame()
+x_2_se_df_total <- data.frame()
+x_1_b_df_total <- data.frame()
+x_2_b_df_total <- data.frame()
+vif_b1_df_total <- data.frame()
+vif_b2_df_total <- data.frame()
+
+# get distribution of errors for each correlation
+e_total <- data.frame()
+
+# for loop
+
+for (i in a){
+  x_1 <- rnorm(n, 10, 1)
+  x_2 <- rnorm(n, 10, 1) + i*x_1 # this is where the multi-collinearity comes in
+  e <-   rnorm(n, 0, 5)
+  
+  y <- b_1*x_1 + b_2*x_2  + e
+  fit<- lm(y ~ x_1 + x_2 ) # fitting our linear model to the data
+  # get the R squared
+  r_sq_df <- summary(fit)$r.squared 
+  r_sq_df_total <- rbind(r_sq_df_total,r_sq_df)
+  # get the Adjusted R squared
+  adj_r_sq_df <- summary(fit)$adj.r.squared 
+  adj_r_sq_df_total <- rbind(adj_r_sq_df_total,adj_r_sq_df)
+  # F statistic
+  f_stat_df <- as.numeric(summary(fit)$fstat[1]) 
+  f_stat_df_total <- rbind(f_stat_df_total,f_stat_df)
+  # get correlation between x_1 and x_2
+  cor_df <- cor(x_1,x_2) 
+  cor_df_total <- rbind(cor_df_total,cor_df)
+ # get x_1 standard error
+  x_1_se_df <- sqrt(diag(vcov(fit)))[2]
+  x_1_se_df_total <- rbind(x_1_se_df_total,x_1_se_df)
+  # get x_2 standard error
+  x_2_se_df <- sqrt(diag(vcov(fit)))[3]
+  x_2_se_df_total <- rbind(x_2_se_df_total,x_2_se_df)
+  # get x_1 coefficients
+  x_1_b_df <- fit$coefficients[2]
+  x_1_b_df_total <- rbind(x_1_b_df_total,x_1_b_df)
+  # get x_2 coefficients error
+  x_2_b_df <- fit$coefficients[3]
+  x_2_b_df_total <- rbind(x_2_b_df_total,x_2_b_df)
+  # get b_1 VIF
+  vif_b1 <- as.numeric(vif(fit)[1])
+  vif_b1_df_total <- rbind(vif_b1_df_total,vif_b1)
+  # get x_2 coefficients error
+  vif_b2 <- as.numeric(vif(fit)[2])
+  vif_b2_df_total <- rbind(vif_b2_df_total,vif_b2)
+  # get distribution of errors for each regression group by cor
+  
+  e <- cbind(fit$residuals, rep(cor_df, times = n))
+  e_total<- rbind(e_total,e)
+  
+}
+
+# combine all the data
+all_data <- cbind(a,r_sq_df_total,cor_df_total, adj_r_sq_df_total,f_stat_df_total, x_1_se_df_total,x_2_se_df_total,x_1_b_df_total, x_2_b_df_total, vif_b1_df_total, vif_b2_df_total) %>% 
+  rename(i= 1,r_sq = 2, cor =3 , adj_r_sq = 4, f_stat = 5,
+         x_1_se = 6, x_2_se = 7, x_1_b = 8, x_2_b = 9, vif_b1 = 10,
+         vif_b2 = 11) %>% 
+  tibble() 
+
+
+```
+
+The simulation loops an increasing effect of $x_1$ on $x_2$ from 0 unit
+increase to a 5 unit increase in 0.5 increments. The first simulation
+has 0 effect which means there is no correlation between the two
+variables (aka no multi-collionearity). As we increase the effect on
+$x_2$, the correlation increases (albeit, non-linearly):
+
+```{r}
+# plot of corr with increments a 
+
+all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= i, y = cor))+
+  theme_minimal()+
+  xlab('Steps: Unit Effect of X1 on X2')+
+  ylab('Correlation')
+```
+
+There is a crucial point worth mentioning: the Gauss-Markov assumption
+implies that the relationship must be linear and perfect. This
+regression presents an increasing *linear* relationship between $x_1$
+and $x_2$. Non-linear relationships are allowed (and I encourage you to
+test this by augmenting this simulation). A common example in the
+econometrics literature is the Mincer model (estimating the effects of
+wages on schooling) where experience and the square of experience are
+explanatory variables.
+
+But when is perfect collinearity? Can you be close to perfect and still
+have an unbiased estimator? When is close to perfect?
+
+The official answer from Wooldridge is that there is no definite answer,
+only that we want to be "far enough" from perfect collinearity as we
+can. Let's explore what Wooldridge is saying:
+
+# Simulation Results
+
+Recall, we want to evaluate the model on two criteria: (1) it's ability
+to estimate the parameters $\hat{\beta}$ and (2) make predictions
+$\hat{y}$.
+
+Let's observe how the estimated parameters turned out:
+
+## Correlation: Coefficient, Standard Error, and T-Statistic {.tabset}
+
+### Coefficients
+
+```{r}
+p1<- all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= cor, y = x_1_b, color = 'X1 Coefficient'))+
+  geom_line(aes(x= cor, y = x_2_b, color = 'X2 Coefficient'))+
+  geom_hline(yintercept = 1, linetype = 'dashed')+
+  geom_hline(yintercept = 2, linetype = 'dashed')+
+   theme_minimal()+
+  xlab('Correlation')+
+  ylab('Estimated Coefficient')+
+  theme(legend.title = element_blank())
+
+p1
+```
+
+### Standard Errors
+
+```{r}
+p2<- all_data %>% 
+# filter(cor < 0.9) %>% 
+ ggplot()+ 
+   geom_line(aes(x= cor, y = x_1_se, color = 'X1 standard error'))+
+   geom_line(aes(x= cor, y = x_2_se, color = 'X2 standard error'))+
+  theme_minimal()+
+  xlab('Correlation')+
+  ylab('Estimated Standard Error')+
+  theme(legend.title = element_blank())
+
+p2
+```
+
+### T-Statistic
+
+```{r}
+p3<- all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= cor, y = x_1_b/x_1_se, color = 'X1 t-stat'))+
+  geom_line(aes(x= cor, y = x_2_b/x_2_se, color = 'X2 t-stat'))+
+  theme_minimal()+
+  xlab('Correlation')+
+  ylab('Estimated T-statistic')+
+  theme(legend.title = element_blank())
+
+
+p3
+
+```
+
+##  {.unnumbered}
+
+We can see that as the collinearity (correlation) increases, the
+estimate becomes less consistent. Especially after 50%, the variance of
+the estimate increases with the correlation. Note that the $x_1$
+coefficient has much more than that of $x_2$. This is because the linear
+relationship is coming from on direction. If we simulated the
+relationship where the relationship comes from both directions, we would
+have a case where both the estimates start to explode (again, I ask you
+to test this for yourself).
+
+Due to the non-linearity of the steps and correlation, more regressions
+were ran closer to 1 than to 0. Another way of showing this relationship
+is by plotting the relationship to the steps -- where we are increasing
+the unit effect of $x_1$ on $x_2$. I am sure there is a way to produce a
+linear relationship between correlation and the unit steps in $a$ but
+the point is made regardless.
+
+## Steps: Coefficient, Standard Error, and T-Statistic {.tabset}
+
+### Coefficients
+
+```{r}
+p4<- all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= i, y = x_1_b, color = 'X1 Coefficient'))+
+  geom_line(aes(x= i, y = x_2_b, color = 'X2 Coefficient'))+
+  geom_hline(yintercept = 1, linetype = 'dashed')+
+  geom_hline(yintercept = 2, linetype = 'dashed')+
+  theme_minimal()+
+  xlab('Steps')+
+  ylab('Estimated Coefficients')+
+  theme(legend.title = element_blank())
+
+p4
+
+```
+
+### Standard Errors
+
+```{r}
+
+p5<- all_data %>% 
+filter(cor < 0.9) %>% 
+ ggplot()+ 
+   geom_line(aes(x= i, y = x_1_se, color = 'X1 standard error'))+
+   geom_line(aes(x= i, y = x_2_se, color = 'X2 standard error'))+
+  theme_minimal()+
+  xlab('Steps')+
+  ylab('Estimated Standard Error')+
+  theme(legend.title = element_blank())
+
+p5
+
+```
+
+### T-Statistic
+
+```{r}
+
+p6<- all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= i, y = x_1_b/x_1_se, color = 'X1 T-Statistic'))+
+  geom_line(aes(x= i, y = x_2_b/x_2_se, color = 'X2 T-Statistic'))+
+  theme_minimal()+
+  xlab('Steps')+
+  ylab('Estimated T-Statistic')+
+  theme(legend.title = element_blank())
+
+p6
+
+```
+
+##  {.unnumbered}
+
+So we can see that our estimates don't quite match our estimand. We can
+also see that our standard error for $x_1$ is increasing at an
+increasing rate which reduces our t-statistic to nearly zero after
+correlation is past 90%.
+
+So to answer the question when is collinearity a problem? It depends
+where you set your limit. We see that the standard error inflates after
+50% correlation and past 75% it explodes. Ultimately, however much you
+think your standard error is too large is when it's too large.
+
+## How good is my $\hat{y}$ ? {.tabset}
+
+We can also see how the collinearity affects how we evaluate the
+strength of our model: the F-statistic and the R-squared.
+
+### Correlation and F-Statistic
+
+```{r}
+
+p7 <- all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= cor, y = f_stat, color = 'F-stat'))+
+  theme(legend.position = "none")+
+  theme_minimal()+
+  xlab('Correlation')+
+  ylab('F-Statistic')+
+  theme(legend.title = element_blank())
+
+p7
+
+```
+
+### Correlation and (Adjusted) R-Squared
+
+```{r}
+
+
+p8 <- all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= cor, y = adj_r_sq, color = 'Adj. R-Squared'))+
+  geom_line(aes(x= cor, y = r_sq, color = 'R-Squared'))+
+  theme(legend.position = "none")+
+  theme_minimal()+
+  xlab('Correlation')+
+  ylab('(Adjusted) R-Squared')+
+  theme(legend.title = element_blank())
+
+p8
+
+```
+
+### Steps and F-Statistic
+
+```{r}
+
+p9 <- all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= i, y = f_stat, color = 'F-stat'))+
+  theme_minimal()+
+  xlab('Correlation')+
+  ylab('F-Statistic')+
+  theme(legend.title = element_blank())
+
+p9
+
+```
+
+### Steps and (Adjusted) R-Squared
+
+```{r}
+
+p10 <- all_data %>% 
+  ggplot()+ 
+  geom_line(aes(x= i, y = adj_r_sq, color = 'Adj. R-Squared'))+
+  geom_line(aes(x= i, y = r_sq, color = 'R-Squared'))+
+  theme_minimal()+
+  xlab('Step')+
+  ylab('(Adjusted) R-Squared')+
+  theme(legend.title = element_blank())
+
+p10
+
+```
+
+##  {.unnumbered}
+
+We can see that both measures explode against the increasing
+correlation. However, in our data, there is nothing more we are doing to
+explain $y$. It is rather the model that is inflating these values. So
+what happens to our prediction of $y$ when we cannot trust these key
+measures? Well, if we plot the residuals, which are independent from
+$x_1$ and $x_2$ , we actually see that our prediction does not change:
+
+```{r}
+# residuals over increasing correlation
+
+
+e_total_clean<- e_total %>% 
+  rename(residuals = 1, corr_group = 2) %>% 
+  mutate(corr_group = round(corr_group,3)) 
+
+
+ggplot(e_total_clean,aes(x = residuals, frame = corr_group)) + 
+  geom_density(col = "black",fill = "blue") + 
+  geom_vline(xintercept = 0, col = "red" )+
+  labs(caption = 'Correlation: {closest_state} ')+
+  ylab('Density of Residuals')+
+  xlab('')+
+  ggtitle('Prediction with Increasing Multi-Collinearity', subtitle = 'Distribution of residuals over increasing correlation between X1 and X2')+
+  transition_states(states = corr_group) + 
+  shadow_mark(alpha = .3)+
+  theme_classic()
+
+
+```
+
+We can see that our residuals do not change much over the increasing
+collinearity. This leads us to believe that our model can still predict
+$y$ , but we have no way of evaluating how well that prediction is
+through the R-squared and F-statistic. We could however, evaluate
+through plotting the predicted values against the residuals and other
+tests that could be unaffected.
+
+# Final Thoughts
+
+So, to conclude, when you're professor or colleague responds to your
+model with "some correlation is okay, but perfect collinearity is not",
+do you understand what they mean by that? We can see that our standard
+errors and estimated coefficients get worse as correlation increases and
+that the F-statistic and R-squared lose their ability to be interpreted.
+Interestingly, however, our residuals are unaffected which leads us to
+believe that our prediction of $y$ could still be correct -- though we
+need to evaluate in other ways.
+
+After reading this, I recommend going over Wooldridge's book at Section
+3-4a and running through the formal definitions of the measures we went
+over. Further, to try your simulation skills: (1) try making the
+relationship non-linear between $x_1$ and $x_2$ and (2) try making the
+relationship going both ways.
